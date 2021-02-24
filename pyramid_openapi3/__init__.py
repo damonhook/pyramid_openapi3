@@ -290,7 +290,7 @@ def register_routes(config: Configurator, apiname: str = "pyramid_openapi3") -> 
         settings = config.registry.settings
         if settings.get(apiname) is None or settings[apiname].get("spec") is None:
             raise ConfigurationError(
-                "You need to call config.pyramid_openapi3_spec for explorer to work."
+                "You must call config.pyramid_openapi3_spec before registering routes."
             )
         spec = settings[apiname]["spec"]
         server_prefixes = _get_server_prefixes(spec)
