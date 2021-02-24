@@ -82,6 +82,26 @@ For responses, if the payload does not match the API document, an exception is r
 
 ## Advanced configuration
 
+### Auto registering routes
+
+It is possible to have `pyramid_openapi3` auto-register pyramid routes based on the OpenApi spec. The route names for these are based on the `operationId` linked to each spec'd operation. This means that in order to use this feature, every operation in the spec **must** contain an `operationId` (the directive will raise an error if it finds a missing one).
+
+
+```python
+# Add spec as per normal
+config.pyramid_openapi3_spec('openapi.yaml', route='/api/v1/openapi.yaml')
+# Auto-register routes contained in the spec
+config.pyramid_openapi3_register_routes()
+```
+
+This will mean that you **no longer** need to do
+
+```python
+config.add_route("foo", "/foo")
+config.add_route("bar", "/bar")
+...
+```
+
 ### Relative File References in Spec
 
 A feature introduced in OpenAPI3 is the ability to use `$ref` links to external files (https://github.com/OAI/OpenAPI-Specification/blob/master/versions/3.0.0.md#referenceObject).

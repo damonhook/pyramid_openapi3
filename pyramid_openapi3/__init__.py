@@ -6,6 +6,7 @@ from .exceptions import RequestValidationError
 from .exceptions import ResponseValidationError
 from .wrappers import PyramidOpenAPIRequestFactory
 from openapi_core import create_spec
+from openapi_core.schema.specs.models import Spec
 from openapi_core.validation.exceptions import InvalidSecurity
 from openapi_core.validation.request.validators import RequestValidator
 from openapi_core.validation.response.validators import ResponseValidator
@@ -44,6 +45,7 @@ def includeme(config: Configurator) -> None:
     config.add_directive("pyramid_openapi3_add_explorer", add_explorer_view)
     config.add_directive("pyramid_openapi3_spec", add_spec_view)
     config.add_directive("pyramid_openapi3_spec_directory", add_spec_view_directory)
+    config.add_directive("pyramid_openapi3_register_routes", register_routes)
     config.add_tween("pyramid_openapi3.tween.response_tween_factory", over=EXCVIEW)
     config.add_subscriber(check_all_routes, ApplicationCreated)
 
@@ -281,6 +283,41 @@ def add_spec_view_directory(
     config.action(("pyramid_openapi3_spec",), register, order=PHASE0_CONFIG)
 
 
+def register_routes(config: Configurator, apiname: str = "pyramid_openapi3") -> None:
+    """Register the routes for each operation defined in the OpenApi spec."""
+
+    def register() -> None:
+        settings = config.registry.settings
+        if settings.get(apiname) is None or settings[apiname].get("spec") is None:
+            raise ConfigurationError(
+                "You need to call config.pyramid_openapi3_spec for explorer to work."
+            )
+        spec = settings[apiname]["spec"]
+        server_prefixes = _get_server_prefixes(spec)
+        if server_prefixes and len(server_prefixes) > 1:
+            raise ConfigurationError(
+                "pyramid_openapi3_register_routes is not available for specs which "
+                "contain more than 1 defined server"
+            )
+
+        prefix = next(iter(server_prefixes), None)
+        for route_name, path in spec.paths.items():
+            for method, operation in path.operations.items():
+                method = method.upper()
+                if not operation.operation_id:
+                    raise ConfigurationError(
+                        f"Operation {method} {route_name} is missing an `operationId`. "
+                        f"pyramid_openapi3_register_routes requires all operations in "
+                        f"the spec to define an `operationId`"
+                    )
+                operation_id = operation.operation_id
+                with config.route_prefix_context(prefix):
+                    config.add_route(operation_id, route_name, request_method=method)
+                logger.info(f"Added route {operation_id}: {method} {route_name}")
+
+    config.action((f"{apiname}_register_routes",), register, order=PHASE0_CONFIG)
+
+
 def openapi_validation_error(
     context: t.Union[RequestValidationError, ResponseValidationError], request: Request
 ) -> Response:
@@ -330,13 +367,7 @@ def check_all_routes(event: ApplicationCreated):
             logger.info("Endpoint validation against specification is disabled")
             return
 
-        # Sometimes api routes are prefixed with `/api/v1` and similar, using
-        # https://swagger.io/docs/specification/api-host-and-base-path/
-        prefixes = []
-        for server in openapi_settings["spec"].servers:
-            path = urlparse(server.url).path
-            if path != "/":
-                prefixes.append(path)
+        prefixes = _get_server_prefixes(openapi_settings["spec"])
 
         def remove_prefixes(path):
             path = f"/{path}" if not path.startswith("/") else path
@@ -346,13 +377,8 @@ def check_all_routes(event: ApplicationCreated):
 
         paths = list(openapi_settings["spec"].paths.keys())
         routes = [
-            remove_prefixes(route.path)
-            for name, route in app.routes_mapper.routes.items()
+            remove_prefixes(route.path) for route in app.routes_mapper.routes.values()
         ]
-        route_names = {
-            remove_prefixes(route.path): name
-            for name, route in app.routes_mapper.routes.items()
-        }
 
         missing = [r for r in paths if r not in routes]
         if missing:
@@ -360,5 +386,24 @@ def check_all_routes(event: ApplicationCreated):
 
         settings.setdefault("pyramid_openapi3", {})
         settings["pyramid_openapi3"].setdefault("routes", {})
-        for path in paths:
-            settings["pyramid_openapi3"]["routes"][route_names[path]] = name
+
+        # It is possible to have multiple `add_route` for a single path
+        # (due to request_method predicates)
+        for route_name, route in app.routes_mapper.routes.items():
+            if remove_prefixes(route.path) in paths:
+                settings["pyramid_openapi3"]["routes"][route_name] = name
+
+
+def _get_server_prefixes(spec: Spec) -> t.Set[str]:
+    """
+    Build a set of possible route prefixes from the api spec.
+
+    Api routes may optionally be prefixed using servers (e.g: `/api/v1`).
+    See: https://swagger.io/docs/specification/api-host-and-base-path/
+    """
+    prefixes = set()
+    for server in spec.servers or []:
+        path = urlparse(server.url).path
+        if path != "/":
+            prefixes.add(path)
+    return prefixes

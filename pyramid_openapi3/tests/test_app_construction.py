@@ -1,6 +1,7 @@
 """Tests for app creation when using pyramid_openapi3."""
 from _pytest.logging import LogCaptureFixture
 from pyramid.config import Configurator
+from pyramid.exceptions import ConfigurationError
 from pyramid.request import Request
 from pyramid.testing import testConfig
 from pyramid_openapi3 import MissingEndpointsError
@@ -20,29 +21,22 @@ DOCUMENT = b"""
     paths:
       /foo:
         get:
+          operationId: get_foo
           responses:
             200:
               description: A foo
         post:
+          operationId: create_foo
           responses:
             200:
               description: A POST foo
       /bar:
         get:
+          operationId: get_bar
           responses:
             200:
               description: A bar
 """
-
-
-def foo_view(request: Request) -> str:
-    """Return a dummy string."""
-    return "Foo"  # pragma: no cover
-
-
-def bar_view(request: Request) -> str:
-    """Return a dummy string."""
-    return "Bar"  # pragma: no cover
 
 
 @pytest.fixture
@@ -53,6 +47,70 @@ def document() -> t.Generator[t.IO, None, None]:
         document.seek(0)
 
         yield document
+
+
+TOO_MANY_SERVERS_DOCUMENT = b"""
+    openapi: "3.0.0"
+    info:
+      version: "1.0.0"
+      title: Foo API
+    servers:
+      - url: /api/v1
+      - url: /rest
+    paths:
+      /foo:
+        get:
+          operationId: get_foo
+          responses:
+            200:
+              description: A foo
+"""
+
+
+@pytest.fixture
+def too_many_servers_document() -> t.Generator[t.IO, None, None]:
+    """Load the TOO_MANY_SERVERS_DOCUMENT into a temp file."""
+    with tempfile.NamedTemporaryFile() as document:
+        document.write(TOO_MANY_SERVERS_DOCUMENT)
+        document.seek(0)
+
+        yield document
+
+
+MISSING_OPERATION_IDS_DOCUMENT = b"""
+    openapi: "3.0.0"
+    info:
+      version: "1.0.0"
+      title: Foo API
+    servers:
+      - url: /api/v1
+    paths:
+      /foo:
+        get:
+          responses:
+            200:
+              description: A foo
+"""
+
+
+@pytest.fixture
+def missing_operation_ids_document() -> t.Generator[t.IO, None, None]:
+    """Load the MISSING_OPERATION_IDS_DOCUMENT into a temp file."""
+    with tempfile.NamedTemporaryFile() as document:
+        document.write(MISSING_OPERATION_IDS_DOCUMENT)
+        document.seek(0)
+
+        yield document
+
+
+def foo_view(request: Request) -> str:
+    """Return a dummy string."""
+    return "Foo"  # pragma: no cover
+
+
+def bar_view(request: Request) -> str:
+    """Return a dummy string."""
+    return "Bar"  # pragma: no cover
 
 
 @pytest.fixture
@@ -140,6 +198,53 @@ def test_disable_endpoint_validation(
     app_config.make_wsgi_app()
 
     assert "Endpoint validation against specification is disabled" in caplog.text
+
+
+def test_register_routes(app_config: Configurator) -> None:
+    """Test case showing that an app can be created with auto registered routes."""
+    app_config.pyramid_openapi3_register_routes()
+    app_config.add_view(
+        foo_view, route_name="get_foo", renderer="string", request_method="GET"
+    )
+    app_config.add_view(
+        foo_view, route_name="create_foo", renderer="string", request_method="POST"
+    )
+    app_config.add_view(
+        bar_view, route_name="get_bar", renderer="string", request_method="GET"
+    )
+    app_config.make_wsgi_app()
+
+
+def test_register_routes_too_many_servers(too_many_servers_document: t.IO) -> None:
+    """Tests that an app cannot auto register routes with too many servers."""
+    with testConfig() as config:
+        config.include("pyramid_openapi3")
+        config.pyramid_openapi3_spec(
+            too_many_servers_document.name, route="/foo.yaml", route_name="foo_api_spec"
+        )
+        with pytest.raises(ConfigurationError):
+            config.pyramid_openapi3_register_routes()
+
+
+def test_register_routes_missing_ids(missing_operation_ids_document: t.IO) -> None:
+    """Tests that an app cannot auto register routes with missing operationIds."""
+    with testConfig() as config:
+        config.include("pyramid_openapi3")
+        config.pyramid_openapi3_spec(
+            missing_operation_ids_document.name,
+            route="/foo.yaml",
+            route_name="foo_api_spec",
+        )
+        with pytest.raises(ConfigurationError):
+            config.pyramid_openapi3_register_routes()
+
+
+def test_register_routes_no_spec() -> None:
+    """Tests that an app cannot auto register routes without first adding the spec."""
+    with testConfig() as config:
+        config.include("pyramid_openapi3")
+        with pytest.raises(ConfigurationError):
+            config.pyramid_openapi3_register_routes()
 
 
 def test_unconfigured_app(

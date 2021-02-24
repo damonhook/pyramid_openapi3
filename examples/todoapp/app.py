@@ -11,6 +11,7 @@ from pyramid.router import Router
 from pyramid.view import view_config
 from wsgiref.simple_server import make_server
 
+import logging
 import os
 import typing as t
 
@@ -36,13 +37,15 @@ ITEMS = [
 # fmt: on
 
 
-@view_config(route_name="todo", renderer="json", request_method="GET", openapi=True)
+@view_config(route_name="get_todo", renderer="json", request_method="GET", openapi=True)
 def get(request: Request) -> t.List[Item]:
     """Serve the list of TODO items for GET requests."""
     return ITEMS
 
 
-@view_config(route_name="todo", renderer="json", request_method="POST", openapi=True)
+@view_config(
+    route_name="create_todo", renderer="json", request_method="POST", openapi=True
+)
 def post(request: Request) -> str:
     """Handle POST requests and create TODO items."""
     item = Item(title=request.openapi_validated.body["title"])
@@ -53,12 +56,13 @@ def post(request: Request) -> str:
 def app() -> Router:
     """Prepare a Pyramid app."""
     with Configurator() as config:
+        logging.basicConfig(level=logging.INFO)
         config.include("pyramid_openapi3")
         config.pyramid_openapi3_spec(
             os.path.join(os.path.dirname(__file__), "openapi.yaml")
         )
+        config.pyramid_openapi3_register_routes()
         config.pyramid_openapi3_add_explorer()
-        config.add_route("todo", "/")
         config.scan(".")
 
         return config.make_wsgi_app()
