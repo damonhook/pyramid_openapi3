@@ -277,7 +277,7 @@ def test_add_explorer_view() -> None:
 
 
 def test_add_multiple_explorer_views() -> None:
-    """Test registration of multiple viewa serving different Swagger UI."""
+    """Test registration of multiple views serving different Swagger UI."""
     with testConfig() as config:
         config.include("pyramid_openapi3")
 
@@ -320,6 +320,68 @@ def test_add_multiple_explorer_views() -> None:
         response = view(request=DummyRequest(config=config), context=None)
         assert b"<title>Swagger UI</title>" in response.body
         assert b"http://example.com/foo.yaml" in response.body
+
+        request = config.registry.queryUtility(IRouteRequest, name="bar_api_explorer")
+        view = config.registry.adapters.registered(
+            (IViewClassifier, request, Interface), IView, name=""
+        )
+        response = view(request=DummyRequest(config=config), context=None)
+        assert b"<title>Swagger UI</title>" in response.body
+        assert b"http://example.com/bar.yaml" in response.body
+
+
+def test_add_multiple_explorer_views_split_file() -> None:
+    """Test registration of multiple views serving different Swagger UI.
+
+    One of the applied spec's is a multi-file one (spec_directory)
+    """
+    with testConfig() as config:
+        config.include("pyramid_openapi3")
+
+        split_spec_name = None
+        with tempfile.TemporaryDirectory() as directory:
+            split_spec_name = os.path.join(directory, "openapi.yaml")
+            spec_paths_name = os.path.join(directory, "paths.yaml")
+            with open(split_spec_name, "wb") as f:
+                f.write(SPLIT_DOCUMENT)
+            with open(spec_paths_name, "wb") as f:
+                f.write(SPLIT_DOCUMENT_PATHS)
+
+            config.pyramid_openapi3_spec_directory(
+                split_spec_name,
+                route="/foo_spec",
+                route_name="foo_api_spec",
+                apiname="foo_api",
+            )
+            config.pyramid_openapi3_add_explorer(
+                route="/foo_api/v1/",
+                route_name="foo_api_explorer",
+                apiname="foo_api",
+            )
+
+        with tempfile.NamedTemporaryFile() as document:
+            document.write(ALTERNATE_DOCUMENT)
+            document.seek(0)
+
+            config.pyramid_openapi3_spec(
+                document.name,
+                route="/bar.yaml",
+                route_name="bar_api_spec",
+                apiname="bar_api",
+            )
+            config.pyramid_openapi3_add_explorer(
+                route="/bar_api/v1/",
+                route_name="bar_api_explorer",
+                apiname="bar_api",
+            )
+
+        request = config.registry.queryUtility(IRouteRequest, name="foo_api_explorer")
+        view = config.registry.adapters.registered(
+            (IViewClassifier, request, Interface), IView, name=""
+        )
+        response = view(request=DummyRequest(config=config), context=None)
+        assert b"<title>Swagger UI</title>" in response.body
+        assert b"http://example.com/foo_spec/openapi.yaml" in response.body
 
         request = config.registry.queryUtility(IRouteRequest, name="bar_api_explorer")
         view = config.registry.adapters.registered(
